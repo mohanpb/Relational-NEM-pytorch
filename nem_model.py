@@ -3,9 +3,7 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 import numpy as np
-import tensorflow as tf
-
-from tensorflow.contrib.rnn import RNNCell
+import torch
 from network import net, R_NEM
 from sacred import Ingredient
 
@@ -25,12 +23,14 @@ def cfg():
     k = 5                       # number of components
     nr_steps = 30               # number of EM steps
     pred_init = 0.0             # initial prediction used to compute the input
+    pixel_dist = 'bernoulli'
 
 
 class NEMCell(torch.nn.Module):
     """A RNNCell like implementation of N-EM."""
     @nem.capture
     def __init__(self, cell, input_shape, distribution, pred_init):
+        super(NEMCell, self).__init__()
         self.cell = cell
         if not isinstance(input_shape, torch.Size):
             input_shape = torch.Size(input_shape)
@@ -255,15 +255,7 @@ def get_loss_step_weights(nr_steps, loss_step_weights):
 
 
 @nem.capture
-def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k, collisions=None, actions=None):
-
-    # Get dimensions
-    input_shape = input_data.size()
-    assert len(list(input_shape)) == 6, "Requires 6D input (T, B, K, W, H, C) but {}".format(input_shape.get_shape()[0].value)
-    W, H, C = (x.value for x in list(input_data)[-3:])
-
-    # set pixel distribution
-    pixel_dist = 'bernoulli'
+def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k, pixel_dist, collisions=None, actions=None):
 
     # compute prior
     prior = compute_prior(distribution=pixel_dist)

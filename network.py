@@ -6,7 +6,6 @@ import numpy as np
 import torch
 
 from sacred import Ingredient
-from utils import ACTIVATION_FUNCTIONS
 
 net = Ingredient('network')
 
@@ -75,19 +74,19 @@ net.add_named_config('lstm_250', {'recurrent': [{'name': 'lstm', 'size': 250, 'a
 
 net.add_named_config('r_nem', {
     'recurrent': [
-        {'name': 'r_nem', 'size': 250, 'act': 'sigmoid', 'ln': True,
+        {'name': 'r_nem', 'size_in' : 512+250+250, 'size': 250, 'act': 'sigmoid', 'ln': True,
          'encoder': [
-             {'name': 'fc', 'size': 250, 'act': 'relu', 'ln': True},
+             {'name': 'fc', 'size_in' : 250, 'size': 250, 'act': 'relu', 'ln': True},
          ],
          'core': [
-             {'name': 'fc', 'size': 250, 'act': 'relu', 'ln': True},
+             {'name': 'fc', 'size_in' : 500, 'size': 250, 'act': 'relu', 'ln': True},
          ],
          'context': [
-             {'name': 'fc', 'size': 250, 'act': 'relu', 'ln': True},
+             {'name': 'fc', 'size_in' : 250, 'size': 250, 'act': 'relu', 'ln': True},
          ],
          'attention': [
-             {'name': 'fc', 'size': 100, 'act': 'tanh', 'ln': True},
-             {'name': 'fc', 'size': 1, 'act': 'sigmoid'},
+             {'name': 'fc', 'size_in' : 250, 'size': 100, 'act': 'tanh', 'ln': True},
+             {'name': 'fc', 'size_in' : 100, 'size': 1, 'act': 'sigmoid'},
          ]}
     ]})
 
@@ -131,9 +130,9 @@ net.add_named_config('r_nem_actions', {
 
 
 # GENERIC WRAPPERS
-class LayerWrapper(nn.Module):
+class LayerWrapper(torch.nn.Module):
     def __init__(self, spec, name="Wrapper"):
-        super(Sequence, self).__init__()
+        super(LayerWrapper, self).__init__()
         self._spec = spec
         self._name = name
         if self._spec['name'] == 'fc':
@@ -143,20 +142,21 @@ class LayerWrapper(nn.Module):
         elif self._spec['name'] == 'r_conv':
             self._layer = torch.nn.Conv2d(self._spec['size_in'], self._spec['size'], self._spec['kernel'], stride=self._spec['stride'])
 
-        if self._spec['ln'] == True:
+        self._ln = None
+        if self._spec.get('ln', None) == True:
             if self._spec['name'] == 'fc':
                 self._ln = torch.nn.BatchNorm1d(self._spec['size'])
             elif self._spec['name'] == 'conv':
                 self._ln = torch.nn.BatchNorm2d(self._spec['size'])
 
         self._act = None
-        if self._spec['act'] == 'elu':
-            self._act = torch.nn.Elu()
-        elif self._spec['act'] == 'relu':
-            self._act = torch.nn.ReLu()
-        elif self._spec['act'] == 'sigmoid':
+        if self._spec.get('act',None) == 'elu':
+            self._act = torch.nn.ELU()
+        elif self._spec.get('act',None) == 'relu':
+            self._act = torch.nn.ReLU()
+        elif self._spec.get('act',None) == 'sigmoid':
             self._act = torch.nn.Sigmoid()
-        elif self._spec['act'] == 'tanh':
+        elif self._spec.get('act',None) == 'tanh':
             self._act = torch.nn.Tanh()
 
 
@@ -168,7 +168,7 @@ class LayerWrapper(nn.Module):
         if self._spec['name'] == 'r_conv':
             input = input.view([input.size()[0]]+[self._spec['stride'][0]*self._spec['in_shape'][0], self._spec['stride'][1]*self._spec['in_shape'][1], -1])
         output = self._layer(input)
-        if self._spec['ln'] == True:
+        if self._ln != None:
             output = self._ln(output)
         if self._act!=None:
             output = self._act(output)
@@ -180,10 +180,11 @@ class LayerWrapper(nn.Module):
 class R_NEM(torch.nn.Module):
     @net.capture
     def __init__(self, K, input, output, recurrent, actions=None, name='NPE'):
-        self._encoder = recurrent["encoder"]
-        self._core = core
-        self._context = context
-        self._attention = attention
+        super(R_NEM, self).__init__()
+        self._encoder = recurrent[0]["encoder"]
+        self._core = recurrent[0]["core"]
+        self._context = recurrent[0]["context"]
+        self._attention = recurrent[0]["attention"]
         self._actions = actions
         self._recurrent = recurrent
         self._K = K

@@ -10,15 +10,15 @@ import threading
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from torch.distributions.bernoulli.Bernoulli import Bernoulli
+from torch.distributions.bernoulli import Bernoulli
 
 import utils
 from sacred import Experiment
 from sacred.utils import get_by_dotted_path
 from datasets import ds
 from datasets import InputDataset, collate
-from nem_model import nem, static_nem_iterations, dynamic_nem_iteration, get_loss_step_weights
-from network import net
+from nem_model import nem, NEMCell, static_nem_iterations, get_loss_step_weights
+from network import net, R_NEM
 
 ex = Experiment("R-NEM", ingredients=[ds, nem, net])
 
@@ -37,7 +37,7 @@ def cfg():
         },
         'max_patience': 10,                             # number of epochs to wait before early stopping
         'batch_size': 64,
-        'num_workers' : 4,                              # number of data reading threads
+        'num_workers' : 1,                              # number of data reading threads
         'max_epoch': 500,
         'clip_gradients': None,                         # maximum norm of gradients
         'debug_samples': [3, 37, 54],                   # sample ids to generate plots for (None, int, list)
@@ -77,19 +77,22 @@ def add_noise(data, noise):
 
     noise_dist = Bernoulli(torch.tensor([noise['prob']]))
     n = noise_dist.sample(sample_shape=data.size())
-    corrupted = data + n - 2 * data * n  # hacky way of implementing (data XOR n)
+    print(data.size(), n.size())
+    p = torch.mul(2*torch.mul(data,n))
+    print(data.size(), n.size(), p.size())
+    corrupted = data + n - p  # hacky way of implementing (data XOR n)
     return corrupted
 
 
 @ex.capture(prefix='training')
-def set_up_optimizer(optimizer, params, clip_gradients):
+def set_up_optimizer(parameters, optimizer, params):
     opt = {
         'adam': torch.optim.Adam,
         'sgd': torch.optim.SGD,
         'adadelta': torch.optim.Adadelta,
         'adagrad': torch.optim.Adagrad,
         'rmsprop': torch.optim.RMSprop
-    }[optimizer](**params)
+    }[optimizer](parameters, **params)
     return optimizer
     # if clip_gradients is not None:
         # grads_and_vars = [(tf.clip_by_norm(grad, clip_gradients), var)
@@ -159,6 +162,7 @@ def run_epoch(nem_cell, optimizer, data_loader, train=True):
         collisions= data[2].cuda()
 
         features_corrupted = add_noise(features)
+        print(features.size(), features_corrupted.size())
 
         out = static_nem_iterations(nem_cell, features_corrupted, features, optimizer, train, collisions=collisions, actions=None)
         # total losses (and upperbound)
@@ -272,8 +276,8 @@ def run(record_grouping_score, record_relational_loss, feed_actions, net_path, t
     out_list.append(record_relational_loss) if record_relational_loss else None
     out_list.append('actions') if feed_actions else None
 
-    train_dataset = InputDataset("training", out_list)
-    valid_dataset = InputDataset("validation", out_list)
+    train_dataset = InputDataset("training", out_list, sequence_length = nem['nr_steps'] + 1)
+    valid_dataset = InputDataset("validation", out_list, sequence_length = nem['nr_steps'] + 1)
     train_data_loader = DataLoader(dataset=train_dataset, batch_size=training['batch_size'],
                         shuffle=False, num_workers=training['num_workers'],
                         collate_fn=collate)
@@ -281,9 +285,13 @@ def run(record_grouping_score, record_relational_loss, feed_actions, net_path, t
                         shuffle=False, num_workers=training['num_workers'],
                         collate_fn=collate)
     
-    inner_cell = R_NEM(k)
-    nem_cell = NEMCell(inner_cell, input_shape=(W, H, C), distribution=pixel_dist)
-    optimizer = set_up_optimizer()
+    # Get dimensions
+    input_shape = train_dataset._data_in_file['features'].shape
+    W, H, C = list(input_shape)[-3:]
+
+    inner_cell = R_NEM(nem['k'])
+    nem_cell = NEMCell(inner_cell, input_shape=(W, H, C), distribution=nem['pixel_dist'])
+    optimizer = set_up_optimizer(list(nem_cell.parameters())+list(inner_cell.parameters()))
 
     best_valid_loss = np.inf
     best_valid_epoch = 0
