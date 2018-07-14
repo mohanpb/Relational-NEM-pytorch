@@ -33,7 +33,7 @@ class InputDataset(Dataset):
         # open dataset file
         self._hdf5_file = h5py.File(os.path.join(path, name + '.h5'), 'r')
         self._data_in_file = {
-            data_name: self._hdf5_file[self.usage][data_name][()] for data_name in out_list
+            data_name: self._hdf5_file[self.usage][data_name] for data_name in out_list
         }
         
         print(self._data_in_file['features'].shape, self._data_in_file['groups'].shape, self._data_in_file['collisions'].shape)
@@ -52,7 +52,7 @@ class InputDataset(Dataset):
         return self.limit
 
     def __getitem__(self, index):
-        data = [torch.from_numpy(ds[:self.sequence_length, index:index + 1][:, :, None].astype(np.float32)).cuda()
+        data = [torch.from_numpy(ds[:self.sequence_length, index:index + 1][:, :, None].astype(np.float32))
                      for data_name, ds in self._data_in_file.items()]
         return data
     

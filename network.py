@@ -13,15 +13,15 @@ net = Ingredient('network')
 @net.config
 def cfg():
     input = [
-        {'name': 'reshape', 'shape': (64, 64, 1)},
+        {'name': 'reshape', 'shape': [1, 64, 64]},
         {'name': 'conv', 'size_in' : 1, 'size': 16, 'act': 'elu', 'stride': (2, 2), 'kernel': (4, 4), 'ln': True},
         {'name': 'conv', 'size_in' : 16, 'size': 32, 'act': 'elu', 'stride': (2, 2), 'kernel': (4, 4), 'ln': True},
         {'name': 'conv', 'size_in' : 32, 'size': 64, 'act': 'elu', 'stride': (2, 2), 'kernel': (4, 4), 'ln': True},
-        {'name': 'reshape', 'shape': (-1)},
+        {'name': 'reshape', 'shape': [-1]},
         {'name': 'fc', 'size_in' : 4096, 'size': 512, 'act': 'elu', 'ln': True},
     ]
     recurrent = [
-        {'name': 'r_nem', 'size_in' : 512+250+250, 'size': 250, 'act': 'sigmoid', 'ln': True,
+        {'name': 'fc', 'size_in' : 512+250+250, 'size': 250, 'act': 'sigmoid', 'ln': True,
          'encoder': [
              {'name': 'fc', 'size_in' : 250, 'size': 250, 'act': 'relu', 'ln': True},
          ],
@@ -39,11 +39,11 @@ def cfg():
     output = [
         {'name': 'fc', 'size_in' : 250, 'size': 512, 'act': 'relu', 'ln': True},
         {'name': 'fc', 'size_in' : 512, 'size': 8*8*64, 'act': 'relu', 'ln': True},
-        {'name': 'reshape', 'shape': (8, 8, 64)},
-        {'name': 'r_conv', 'in_shape' : (8,8), 'size_in' : 64, 'size': 32, 'act': 'relu', 'stride': [2, 2], 'kernel': (4, 4), 'ln': True},
-        {'name': 'r_conv', 'in_shape' : (16,16), 'size_in' : 32, 'size': 16, 'act': 'relu', 'stride': [2, 2], 'kernel': (4, 4), 'ln': True},
-        {'name': 'r_conv', 'in_shape' : (32,32), 'size_in' : 16, 'size': 1, 'act': 'sigmoid', 'stride': [2, 2], 'kernel': (4, 4)},
-        {'name': 'reshape', 'shape': (-1)},
+        {'name': 'reshape', 'shape': [64, 8, 8]},
+        {'name': 'r_conv', 'in_shape' : (8,8), 'size_in' : 64, 'size': 32, 'act': 'relu', 'stride': (2, 2), 'kernel': (5, 5), 'ln': True},
+        {'name': 'r_conv', 'in_shape' : (16,16), 'size_in' : 32, 'size': 16, 'act': 'relu', 'stride': (2, 2), 'kernel': (5, 5), 'ln': True},
+        {'name': 'r_conv', 'in_shape' : (32,32), 'size_in' : 16, 'size': 1, 'act': 'sigmoid', 'stride': (2, 2), 'kernel': (5, 5)},
+        {'name': 'reshape', 'shape': [-1]},
     ]
 
 # encoder decoder pairs
@@ -74,7 +74,7 @@ net.add_named_config('lstm_250', {'recurrent': [{'name': 'lstm', 'size': 250, 'a
 
 net.add_named_config('r_nem', {
     'recurrent': [
-        {'name': 'r_nem', 'size_in' : 512+250+250, 'size': 250, 'act': 'sigmoid', 'ln': True,
+        {'name': 'fc', 'size_in' : 512+250+250, 'size': 250, 'act': 'sigmoid', 'ln': True,
          'encoder': [
              {'name': 'fc', 'size_in' : 250, 'size': 250, 'act': 'relu', 'ln': True},
          ],
@@ -138,9 +138,9 @@ class LayerWrapper(torch.nn.Module):
         if self._spec['name'] == 'fc':
             self._layer = torch.nn.Linear(self._spec['size_in'], self._spec['size'])
         elif self._spec['name'] == 'conv':
-            self._layer = torch.nn.Conv2d(self._spec['size_in'], self._spec['size'], self._spec['kernel'], stride=self._spec['stride'])
+            self._layer = torch.nn.Conv2d(self._spec['size_in'], self._spec['size'], self._spec['kernel'], stride=self._spec['stride'], padding=(1,1))
         elif self._spec['name'] == 'r_conv':
-            self._layer = torch.nn.Conv2d(self._spec['size_in'], self._spec['size'], self._spec['kernel'], stride=self._spec['stride'])
+            self._layer = torch.nn.Conv2d(self._spec['size_in'], self._spec['size'], self._spec['kernel'], padding=(2,2))
 
         self._ln = None
         if self._spec.get('ln', None) == True:
@@ -159,19 +159,24 @@ class LayerWrapper(torch.nn.Module):
         elif self._spec.get('act',None) == 'tanh':
             self._act = torch.nn.Tanh()
 
+        self._transform = None
+        if self._spec['name']=='r_conv':
+            self._transform = torch.nn.Upsample(scale_factor=self._spec['stride'][0], mode="bilinear")
+
 
     def forward(self, input):
         if self._spec['name'] == 'reshape':
-            output = input.view([input.size()[0]]+list(self._spec['shape']))
+            output = input.view([list(input.size())[0]]+self._spec['shape'])
             return output
 
         if self._spec['name'] == 'r_conv':
-            input = input.view([input.size()[0]]+[self._spec['stride'][0]*self._spec['in_shape'][0], self._spec['stride'][1]*self._spec['in_shape'][1], -1])
+            input = self._transform(input)
         output = self._layer(input)
         if self._ln != None:
             output = self._ln(output)
         if self._act!=None:
             output = self._act(output)
+        print(output.size())
         return output
 
 
@@ -213,18 +218,18 @@ class R_NEM(torch.nn.Module):
 
     @property
     def state_size(self):
-        return self._recurrent['size']
+        return self._recurrent[0]['size']
 
     @property
     def output_size(self):
-        return self._recurrent['size']
+        return self._recurrent[0]['size']
 
     def init_hidden(self, batch_size):
         # variable of size [num_layers*num_directions, b_sz, hidden_sz]
         return torch.autograd.Variable(torch.zeros(batch_size, self.state_size)).cuda() 
 
     def forward(self, inputs, state):
-        b = inputs.size()[0]/self._K
+        b = int(inputs.size()[0]/self._K)
         k = self._K
         m = inputs.size()[1]
 
@@ -249,15 +254,15 @@ class R_NEM(torch.nn.Module):
         else:
             cs = torch.zeros(b, k, k-1, h1)
 
-        cs = cs.view(b*self._K*(self._K-1),m)
-        fs = fs.view(b*self._K*(self._K-1),m)
+        cs = cs.view(b*self._K*(self._K-1),-1)
+        fs = fs.view(b*self._K*(self._K-1),-1)
 
         core_out = torch.cat((cs,fs),dim=1)
 
         core_out = self._core_wrapper(core_out)
 
         context = self._context_wrapper(core_out)
-        contextr = context.view(b*self._K, self._K-1, m)
+        contextr = context.view(b*self._K, self._K-1, -1)
 
         attention = self._att_wrapper(core_out)
         attentionr = attention.view(b*k, k-1, 1)
@@ -267,5 +272,5 @@ class R_NEM(torch.nn.Module):
 
         new_state = self._recurrent_wrapper(total)
 
-        return self._output_wrapper(new_state)
+        return self._output_wrapper(new_state), new_state
 

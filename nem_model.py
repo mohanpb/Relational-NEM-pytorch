@@ -138,13 +138,14 @@ class NEMCell(torch.nn.Module):
 
         return gamma
 
-    def __call__(self, inputs, state, scope=None):
+    def forward(self, inputs, state, scope=None):
         # unpack
         input_data, target_data = inputs
         h_old, preds_old, gamma_old = state
 
         # compute differences between prediction and input
         deltas = self.delta_predictions(preds_old, input_data)
+        print(deltas.size())
 
         # mask with gamma
         masked_deltas = self.mask_rnn_inputs(deltas, gamma_old)
@@ -195,15 +196,15 @@ def compute_outer_loss(mu, gamma, target, prior, pixel_distribution, collision, 
 
     # weigh losses by gamma and reduce by taking mean across B and sum across H, W, C, K
     # implemented as sum over all then divide by B
-    batch_size = (target.size()[0]).type(torch.float32)
+    batch_size = (target.size()[0])
 
     # compute rel losses
-    r_intra_loss = torch.sum(collision * intra_loss * gamma.detach()) / batch_size
-    r_inter_loss = torch.sum(collision * inter_loss * (1. - gamma.detach())) / batch_size
+    r_intra_loss = torch.div(torch.sum(collision * intra_loss * gamma.detach()), batch_size)
+    r_inter_loss = torch.div(torch.sum(collision * inter_loss * (1. - gamma.detach())), batch_size)
 
     # compute normal losses
-    intra_loss = torch.sum(intra_loss * gamma.detach()) / batch_size
-    inter_loss = torch.sum(inter_loss * (1. - gamma.detach())) / batch_size
+    intra_loss = torch.div(torch.sum(intra_loss * gamma.detach()), batch_size)
+    inter_loss = torch.div(torch.sum(inter_loss * (1. - gamma.detach())), batch_size)
 
     total_loss = intra_loss + loss_inter_weight * inter_loss
     r_total_loss = r_intra_loss + loss_inter_weight * r_inter_loss
@@ -222,15 +223,15 @@ def compute_outer_ub_loss(pred, target, prior, pixel_distribution, collision, lo
 
     # weigh losses by gamma and reduce by taking mean across B and sum across H, W, C, K
     # implemented as sum over all then divide by B
-    batch_size = (target.size()[0]).type(torch.float32)
+    batch_size = (target.size()[0])
 
     # compute rel losses
-    r_intra_ub_loss = torch.sum(collision * intra_ub_loss) / batch_size
-    r_inter_ub_loss = torch.sum(collision * inter_ub_loss) / batch_size
+    r_intra_ub_loss = torch.div(torch.sum(collision * intra_ub_loss), batch_size)
+    r_inter_ub_loss = torch.div(torch.sum(collision * inter_ub_loss), batch_size)
 
     # compute normal losses
-    intra_ub_loss = torch.sum(intra_ub_loss) / batch_size
-    inter_ub_loss = torch.sum(inter_ub_loss) / batch_size
+    intra_ub_loss = torch.div(torch.sum(intra_ub_loss), batch_size)
+    inter_ub_loss = torch.div(torch.sum(inter_ub_loss), batch_size)
 
     total_ub_loss = intra_ub_loss + loss_inter_weight * inter_ub_loss
     r_total_ub_loss = r_intra_ub_loss + loss_inter_weight * r_inter_ub_loss
@@ -261,7 +262,7 @@ def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k
     prior = compute_prior(distribution=pixel_dist)
 
     # get state initializer
-    hidden_state = nem_cell.init_state(input_shape[1], k, dtype=torch.float32)
+    hidden_state = nem_cell.init_state(list(input_data.size())[1], k, dtype=torch.float32)
 
     # build static iterations
     outputs = [hidden_state]

@@ -75,11 +75,8 @@ def add_noise(data, noise):
     if noise_type in ['None', 'none', None]:
         return data
 
-    noise_dist = Bernoulli(torch.tensor([noise['prob']]))
-    n = noise_dist.sample(sample_shape=data.size())
-    print(data.size(), n.size())
-    p = torch.mul(2*torch.mul(data,n))
-    print(data.size(), n.size(), p.size())
+    n = torch.bernoulli(noise['prob']*torch.ones(data.size()))
+    p = 2*torch.mul(data,n)
     corrupted = data + n - p  # hacky way of implementing (data XOR n)
     return corrupted
 
@@ -257,6 +254,8 @@ def print_log_dict(log_dict, usage, t, dt, s_loss_weights, dt_s_loss_weights):
 
 @ex.automain
 def run(record_grouping_score, record_relational_loss, feed_actions, net_path, training, validation, nem, dt, seed, log_dir, _run):
+    
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
     save_epochs = training['save_epochs']
 
     # clear debug dir
