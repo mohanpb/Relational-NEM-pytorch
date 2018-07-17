@@ -145,7 +145,6 @@ class NEMCell(torch.nn.Module):
 
         # compute differences between prediction and input
         deltas = self.delta_predictions(preds_old, input_data)
-        print(deltas.size())
 
         # mask with gamma
         masked_deltas = self.mask_rnn_inputs(deltas, gamma_old)
@@ -214,7 +213,7 @@ def compute_outer_loss(mu, gamma, target, prior, pixel_distribution, collision, 
 
 @nem.capture
 def compute_outer_ub_loss(pred, target, prior, pixel_distribution, collision, loss_inter_weight):
-    max_pred = torch.max(pred, 1, keepdim=True)
+    max_pred, _ = torch.max(pred, 1, keepdim=True)
     if pixel_distribution == 'bernoulli':
         intra_ub_loss = binomial_cross_entropy_loss(max_pred, target)
         inter_ub_loss = kl_loss_bernoulli(prior, max_pred)

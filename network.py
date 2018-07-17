@@ -172,11 +172,11 @@ class LayerWrapper(torch.nn.Module):
         if self._spec['name'] == 'r_conv':
             input = self._transform(input)
         output = self._layer(input)
+        del input
         if self._ln != None:
             output = self._ln(output)
         if self._act!=None:
             output = self._act(output)
-        print(output.size())
         return output
 
 
@@ -271,6 +271,7 @@ class R_NEM(torch.nn.Module):
         total = torch.cat((state1, effectrsum, inputs), dim=1)
 
         new_state = self._recurrent_wrapper(total)
+        del attention, attentionr, contextr, context, core_out, total, cs, fs, inputs, state1, state1rl, state1r, state1rr, effectrsum
 
         return self._output_wrapper(new_state), new_state
 

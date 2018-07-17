@@ -90,7 +90,7 @@ def set_up_optimizer(parameters, optimizer, params):
         'adagrad': torch.optim.Adagrad,
         'rmsprop': torch.optim.RMSprop
     }[optimizer](parameters, **params)
-    return optimizer
+    return opt
     # if clip_gradients is not None:
         # grads_and_vars = [(tf.clip_by_norm(grad, clip_gradients), var)
         #                   for grad, var in grads_and_vars]
@@ -159,7 +159,7 @@ def run_epoch(nem_cell, optimizer, data_loader, train=True):
         collisions= data[2].cuda()
 
         features_corrupted = add_noise(features)
-        print(features.size(), features_corrupted.size())
+        print(progress)
 
         out = static_nem_iterations(nem_cell, features_corrupted, features, optimizer, train, collisions=collisions, actions=None)
         # total losses (and upperbound)
