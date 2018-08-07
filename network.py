@@ -226,7 +226,10 @@ class R_NEM(torch.nn.Module):
 
     def init_hidden(self, batch_size):
         # variable of size [num_layers*num_directions, b_sz, hidden_sz]
-        return torch.autograd.Variable(torch.zeros(batch_size, self.state_size)).cuda() 
+        if torch.cuda.is_available():
+            return torch.autograd.Variable(torch.zeros(batch_size, self.state_size)).cuda()
+        else:
+            return torch.autograd.Variable(torch.zeros(batch_size, self.state_size))
 
     def forward(self, inputs, state):
         b = int(inputs.size()[0]/self._K)

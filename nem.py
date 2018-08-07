@@ -10,7 +10,7 @@ import threading
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from torch.distributions.bernoulli import Bernoulli
+#from torch.distributions.bernoulli import Bernoulli
 
 import utils
 from sacred import Experiment
@@ -36,7 +36,7 @@ def cfg():
             'lr': 0.001,                     # float
         },
         'max_patience': 10,                             # number of epochs to wait before early stopping
-        'batch_size': 64,
+        'batch_size': 32,
         'num_workers' : 1,                              # number of data reading threads
         'max_epoch': 500,
         'clip_gradients': None,                         # maximum norm of gradients
@@ -154,48 +154,56 @@ def run_epoch(nem_cell, optimizer, data_loader, train=True):
     # run through the epoch
     for progress, data in enumerate(data_loader):
         # run batch
-        features = data[0].cuda()
-        groups = data[1].cuda()
-        collisions= data[2].cuda()
+        if torch.cuda.is_available():
+            features = data[0].cuda()
+            groups = data[1].cuda()
+            collisions= data[2].cuda()
+        else:
+            features = data[0]
+            groups = data[1]
+            collisions= data[2]
 
         features_corrupted = add_noise(features)
-        print(progress)
 
+        t1 = time.time()
         out = static_nem_iterations(nem_cell, features_corrupted, features, optimizer, train, collisions=collisions, actions=None)
+        t2 = time.time() - t1
+        print(progress, t2)
+        # print("Finished static nem iteration")
         # total losses (and upperbound)
         losses.append(out[0].data.cpu().numpy())
         ub_losses.append(out[1].data.cpu().numpy())
 
         # total relational losses (and upperbound)
-        r_losses.append(out[2].data.cpu().numpy())
-        r_ub_losses.append(out[3].data.cpu().numpy())
+        # r_losses.append(out[2].data.cpu().numpy())
+        # r_ub_losses.append(out[3].data.cpu().numpy())
 
         # other losses (and upperbound)
-        others.append(out[4].data.cpu().numpy())
-        others_ub.append(out[5].data.cpu().numpy())
+        # others.append(out[4].data.cpu().numpy())
+        # others_ub.append(out[5].data.cpu().numpy())
 
         # other relational losses (and upperbound)
-        r_others.append(out[6].data.cpu().numpy())
-        r_others_ub.append(out[7].data.cpu().numpy())
+        # r_others.append(out[6].data.cpu().numpy())
+        # r_others_ub.append(out[7].data.cpu().numpy())
 
         # ARI
         # ari_scores.append(out[8] if graph.get('ARI', None) is not None else (0., 0., 0., 0.))
-        ari_scores.append((0., 0., 0., 0.))
+        # ari_scores.append((0., 0., 0., 0.))
 
     # build log dict
     log_dict = {
         'loss': float(np.mean(losses)),
-        'ub_loss': float(np.mean(ub_losses)),
-        'r_loss': float(np.mean(r_losses)),
-        'r_ub_loss': float(np.mean(r_ub_losses)),
-        'others': np.mean(others, axis=0),
-        'others_ub': np.mean(others_ub, axis=0),
-        'r_others': np.mean(r_others, axis=0),
-        'r_others_ub': np.mean(r_others_ub, axis=0),
-        'score': np.mean(ari_scores, axis=0)[0],
-        'score_last': np.mean(ari_scores, axis=0)[1],
-        'score_conf': np.mean(ari_scores, axis=0)[2],
-        'score_last_conf': np.mean(ari_scores, axis=0)[3]
+        'ub_loss': float(np.mean(ub_losses))
+        # 'r_loss': float(np.mean(r_losses)),
+        # 'r_ub_loss': float(np.mean(r_ub_losses)),
+        # 'others': np.mean(others, axis=0),
+        # 'others_ub': np.mean(others_ub, axis=0),
+        # 'r_others': np.mean(r_others, axis=0),
+        # 'r_others_ub': np.mean(r_others_ub, axis=0),
+        # 'score': np.mean(ari_scores, axis=0)[0],
+        # 'score_last': np.mean(ari_scores, axis=0)[1],
+        # 'score_conf': np.mean(ari_scores, axis=0)[2],
+        # 'score_last_conf': np.mean(ari_scores, axis=0)[3]
     }
 
     return log_dict
@@ -255,7 +263,8 @@ def print_log_dict(log_dict, usage, t, dt, s_loss_weights, dt_s_loss_weights):
 @ex.automain
 def run(record_grouping_score, record_relational_loss, feed_actions, net_path, training, validation, nem, dt, seed, log_dir, _run):
     
-    torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    if torch.cuda.is_available():
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
     save_epochs = training['save_epochs']
 
     # clear debug dir

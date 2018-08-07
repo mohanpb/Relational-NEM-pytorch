@@ -208,8 +208,8 @@ def compute_outer_loss(mu, gamma, target, prior, pixel_distribution, collision, 
     total_loss = intra_loss + loss_inter_weight * inter_loss
     r_total_loss = r_intra_loss + loss_inter_weight * r_inter_loss
 
-    return total_loss, intra_loss, inter_loss, r_total_loss, r_intra_loss, r_inter_loss
-
+    del  intra_loss, inter_loss, r_total_loss, r_intra_loss, r_inter_loss
+    return total_loss
 
 @nem.capture
 def compute_outer_ub_loss(pred, target, prior, pixel_distribution, collision, loss_inter_weight):
@@ -235,7 +235,8 @@ def compute_outer_ub_loss(pred, target, prior, pixel_distribution, collision, lo
     total_ub_loss = intra_ub_loss + loss_inter_weight * inter_ub_loss
     r_total_ub_loss = r_intra_ub_loss + loss_inter_weight * r_inter_ub_loss
 
-    return total_ub_loss, intra_ub_loss, inter_ub_loss, r_total_ub_loss, r_intra_ub_loss, r_inter_ub_loss
+    del r_intra_ub_loss, r_inter_ub_loss, intra_ub_loss, inter_ub_loss, r_total_ub_loss
+    return total_ub_loss
 
 
 @nem.capture
@@ -287,17 +288,15 @@ def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k
         collision = torch.zeros(1, 1, 1, 1, 1) if collisions is None else collisions[t]
 
         # compute nem losses
-        total_loss, intra_loss, inter_loss, r_total_loss, r_intra_loss, r_inter_loss = compute_outer_loss(
-            pred, gamma, target_data[t+1], prior, pixel_distribution=pixel_dist, collision=collision)
+        total_loss = compute_outer_loss(pred, gamma, target_data[t+1], prior, pixel_distribution=pixel_dist, collision=collision)
 
         # compute estimated loss upper bound (which doesn't use E-step)
-        total_ub_loss, intra_ub_loss, inter_ub_loss, r_total_ub_loss, r_intra_ub_loss, r_inter_ub_loss = \
-            compute_outer_ub_loss(pred, target_data[t+1], prior, pixel_distribution=pixel_dist, collision=collision)
+        total_ub_loss = compute_outer_ub_loss(pred, target_data[t+1], prior, pixel_distribution=pixel_dist, collision=collision)
 
         total_losses.append(loss_weight * total_loss)
         total_ub_losses.append(loss_weight * total_ub_loss)
 
-        r_total_losses.append(loss_weight * r_total_loss)
+        '''r_total_losses.append(loss_weight * r_total_loss)
         r_total_ub_losses.append(loss_weight * r_total_ub_loss)
 
         other_losses.append(torch.stack([total_loss, intra_loss, inter_loss]))
@@ -306,27 +305,28 @@ def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k
         r_other_losses.append(torch.stack([r_total_loss, r_intra_loss, r_inter_loss]))
         r_other_ub_losses.append(torch.stack([r_total_ub_loss, r_intra_ub_loss, r_inter_ub_loss]))
 
-        outputs.append(output)
+        outputs.append(output)'''
 
     # collect outputs
-    thetas, preds, gammas = zip(*outputs)
-    thetas = torch.stack(thetas)               # (T, 1, B*K, M)
-    preds = torch.stack(preds)                 # (T, B, K, W, H, C)
-    gammas = torch.stack(gammas)               # (T, B, K, W, H, C)
-    other_losses = torch.stack(other_losses)   # (T, 3)
-    other_ub_losses = torch.stack(other_ub_losses)   # (T, 3)
-    r_other_losses = torch.stack(r_other_losses)
-    r_other_ub_losses = torch.stack(r_other_ub_losses)
+    # thetas, preds, gammas = zip(*outputs)
+    # thetas = torch.stack(thetas)               # (T, 1, B*K, M)
+    # preds = torch.stack(preds)                 # (T, B, K, W, H, C)
+    # gammas = torch.stack(gammas)               # (T, B, K, W, H, C)
+    # other_losses = torch.stack(other_losses)   # (T, 3)
+    # other_ub_losses = torch.stack(other_ub_losses)   # (T, 3)
+    # r_other_losses = torch.stack(r_other_losses)
+    # r_other_ub_losses = torch.stack(r_other_ub_losses)
     total_loss = torch.sum(torch.stack(total_losses)) / np.sum(loss_step_weights)
     total_ub_loss = torch.sum(torch.stack(total_ub_losses)) / np.sum(loss_step_weights)
-    r_total_loss = torch.sum(torch.stack(r_total_losses)) / np.sum(loss_step_weights)
-    r_total_ub_loss = torch.sum(torch.stack(r_total_ub_losses)) / np.sum(loss_step_weights)
+    # r_total_loss = torch.sum(torch.stack(r_total_losses)) / np.sum(loss_step_weights)
+    # r_total_ub_loss = torch.sum(torch.stack(r_total_ub_losses)) / np.sum(loss_step_weights)
 
     if train:
         optimizer.zero_grad()
         total_loss.backward()
         optimizer.step()
 
-    return total_loss, total_ub_loss, r_total_loss, r_total_ub_loss, other_losses, \
-           other_ub_losses, r_other_losses, r_other_ub_losses
+    return total_loss, total_ub_loss
+            # r_total_loss, r_total_ub_loss, other_losses, \
+            # other_ub_losses, r_other_losses, r_other_ub_losses
 
