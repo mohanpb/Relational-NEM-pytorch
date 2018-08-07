@@ -39,31 +39,32 @@ class InputDataset(Dataset):
         print(self._data_in_file['features'].shape, self._data_in_file['groups'].shape, self._data_in_file['collisions'].shape)
         self.limit = self._data_in_file['features'].shape[1]
 
-    def __init__(self, usage, out_list=('features', 'groups'), sequence_length=31):
+    def __init__(self, usage, batch_size, out_list=('features', 'groups'), sequence_length=31):
         
         self.usage = usage
         self.sequence_length = sequence_length
+        self.batch_size = batch_size
         
         # with tf.name_scope("{}_queue".format(usage[:5])):
 
         self._open_dataset(out_list)
 
     def __len__(self):
-        return self.limit
+        return int(self.limit/self.batch_size)
 
     def __getitem__(self, index):
-        data = [torch.from_numpy(ds[:self.sequence_length, index:index + 1][:, :, None].astype(np.float32))
+        data = [torch.from_numpy(ds[:self.sequence_length, self.batch_size*index:(index + 1)*self.batch_size][:, :, None].astype(np.float32))
                      for data_name, ds in self._data_in_file.items()]
         return data
-    
 
 def collate(batch):
-    data = [ [] for b in batch[0]]
+    '''data = [ [] for b in batch[0]]
     for b in batch:
         i=0
         for ten in b:
             data[i].append(b[i])
             i+=1
     data = [torch.cat(d,1) for d in data]
-    return data
+    return data'''
+    return batch
 

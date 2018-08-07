@@ -155,13 +155,13 @@ def run_epoch(nem_cell, optimizer, data_loader, train=True):
     for progress, data in enumerate(data_loader):
         # run batch
         if torch.cuda.is_available():
-            features = data[0].cuda()
-            groups = data[1].cuda()
-            collisions= data[2].cuda()
+            features = data[0][0].cuda()
+            groups = data[0][1].cuda()
+            collisions= data[0][2].cuda()
         else:
-            features = data[0]
-            groups = data[1]
-            collisions= data[2]
+            features = data[0][0]
+            groups = data[0][1]
+            collisions= data[0][2]
 
         features_corrupted = add_noise(features)
 
@@ -284,12 +284,12 @@ def run(record_grouping_score, record_relational_loss, feed_actions, net_path, t
     out_list.append(record_relational_loss) if record_relational_loss else None
     out_list.append('actions') if feed_actions else None
 
-    train_dataset = InputDataset("training", out_list, sequence_length = nem['nr_steps'] + 1)
-    valid_dataset = InputDataset("validation", out_list, sequence_length = nem['nr_steps'] + 1)
-    train_data_loader = DataLoader(dataset=train_dataset, batch_size=training['batch_size'],
+    train_dataset = InputDataset("training", training['batch_size'], out_list, sequence_length = nem['nr_steps'] + 1)
+    valid_dataset = InputDataset("validation", training['batch_size'], out_list, sequence_length = nem['nr_steps'] + 1)
+    train_data_loader = DataLoader(dataset=train_dataset, batch_size=1,
                         shuffle=False, num_workers=training['num_workers'],
                         collate_fn=collate)
-    valid_data_loader = DataLoader(dataset=valid_dataset, batch_size=validation['batch_size'],
+    valid_data_loader = DataLoader(dataset=valid_dataset, batch_size=1,
                         shuffle=False, num_workers=training['num_workers'],
                         collate_fn=collate)
     
