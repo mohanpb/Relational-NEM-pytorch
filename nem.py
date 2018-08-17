@@ -36,7 +36,7 @@ def cfg():
             'lr': 0.001,                     # float
         },
         'max_patience': 10,                             # number of epochs to wait before early stopping
-        'batch_size': 32,
+        'batch_size': 3,
         'num_workers' : 1,                              # number of data reading threads
         'max_epoch': 500,
         'clip_gradients': None,                         # maximum norm of gradients
@@ -44,7 +44,7 @@ def cfg():
         'save_epochs': [1, 5, 10, 20, 50, 100]          # at what epochs to save the model independent of valid loss
     }
     validation = {
-        'batch_size': training['batch_size'],
+        'batch_size': 3,
         'debug_samples': [0, 1, 2]                      # sample ids to generate plots for (None, int, list)
     }
 
@@ -166,7 +166,7 @@ def run_epoch(nem_cell, optimizer, data_loader, train=True):
         features_corrupted = add_noise(features)
 
         t1 = time.time()
-        out = static_nem_iterations(nem_cell, features_corrupted, features, optimizer, train, collisions=collisions, actions=None)
+        out = static_nem_iterations(nem_cell, features_corrupted, features, optimizer, train, groups, collisions=collisions, actions=None)
         t2 = time.time() - t1
         print(progress, t2)
         # print("Finished static nem iteration")
@@ -175,8 +175,8 @@ def run_epoch(nem_cell, optimizer, data_loader, train=True):
         ub_losses.append(out[1].data.cpu().numpy())
 
         # total relational losses (and upperbound)
-        # r_losses.append(out[2].data.cpu().numpy())
-        # r_ub_losses.append(out[3].data.cpu().numpy())
+        r_losses.append(out[2].data.cpu().numpy())
+        r_ub_losses.append(out[3].data.cpu().numpy())
 
         # other losses (and upperbound)
         # others.append(out[4].data.cpu().numpy())
@@ -187,24 +187,79 @@ def run_epoch(nem_cell, optimizer, data_loader, train=True):
         # r_others_ub.append(out[7].data.cpu().numpy())
 
         # ARI
-        # ari_scores.append(out[8] if graph.get('ARI', None) is not None else (0., 0., 0., 0.))
+        ari_scores.append(out[4].data.cpu().numpy())
         # ari_scores.append((0., 0., 0., 0.))
 
     # build log dict
     log_dict = {
         'loss': float(np.mean(losses)),
-        'ub_loss': float(np.mean(ub_losses))
-        # 'r_loss': float(np.mean(r_losses)),
-        # 'r_ub_loss': float(np.mean(r_ub_losses)),
+        'ub_loss': float(np.mean(ub_losses)),
+        'r_loss': float(np.mean(r_losses)),
+        'r_ub_loss': float(np.mean(r_ub_losses)),
         # 'others': np.mean(others, axis=0),
         # 'others_ub': np.mean(others_ub, axis=0),
         # 'r_others': np.mean(r_others, axis=0),
         # 'r_others_ub': np.mean(r_others_ub, axis=0),
-        # 'score': np.mean(ari_scores, axis=0)[0],
-        # 'score_last': np.mean(ari_scores, axis=0)[1],
-        # 'score_conf': np.mean(ari_scores, axis=0)[2],
-        # 'score_last_conf': np.mean(ari_scores, axis=0)[3]
-    }
+        'score': np.mean(ari_scores, axis=0)
+        }
+
+    return log_dict
+
+def run_val_epoch(nem_cell, optimizer, data_loader):
+
+    losses, ub_losses, r_losses, r_ub_losses, others, others_ub, r_others, r_others_ub, ari_scores = [], [], [], [], [], [], [], [], []
+    # run through the epoch
+    with torch.no_grad():
+        for progress, data in enumerate(data_loader):
+            # run batch
+            if torch.cuda.is_available():
+                features = data[0][0].cuda()
+                groups = data[0][1].cuda()
+                collisions= data[0][2].cuda()
+            else:
+                features = data[0][0]
+                groups = data[0][1]
+                collisions= data[0][2]
+
+            features_corrupted = add_noise(features)
+
+            t1 = time.time()
+            out = static_nem_iterations(nem_cell, features_corrupted, features, optimizer, False, groups, collisions=collisions, actions=None)
+            t2 = time.time() - t1
+            print(progress, t2)
+            # print("Finished static nem iteration")
+            # total losses (and upperbound)
+            losses.append(out[0].data.cpu().numpy())
+            ub_losses.append(out[1].data.cpu().numpy())
+
+            # total relational losses (and upperbound)
+            r_losses.append(out[2].data.cpu().numpy())
+            r_ub_losses.append(out[3].data.cpu().numpy())
+
+            # other losses (and upperbound)
+            # others.append(out[4].data.cpu().numpy())
+            # others_ub.append(out[5].data.cpu().numpy())
+
+            # other relational losses (and upperbound)
+            # r_others.append(out[6].data.cpu().numpy())
+            # r_others_ub.append(out[7].data.cpu().numpy())
+
+            # ARI
+            ari_scores.append(out[4].data.cpu().numpy())
+            # ari_scores.append((0., 0., 0., 0.))
+
+    # build log dict
+    log_dict = {
+        'loss': float(np.mean(losses)),
+        'ub_loss': float(np.mean(ub_losses)),
+        'r_loss': float(np.mean(r_losses)),
+        'r_ub_loss': float(np.mean(r_ub_losses)),
+        # 'others': np.mean(others, axis=0),
+        # 'others_ub': np.mean(others_ub, axis=0),
+        # 'r_others': np.mean(r_others, axis=0),
+        # 'r_others_ub': np.mean(r_others_ub, axis=0),
+        'score': np.mean(ari_scores, axis=0)
+        }
 
     return log_dict
 
@@ -240,24 +295,21 @@ def log_log_dict(usage, log_dict):
 
 
 def print_log_dict(log_dict, usage, t, dt, s_loss_weights, dt_s_loss_weights):
-    print("%s Loss: %.3f (UB: %.3f), Relational Loss: %.3f (UB: %.3f), Score: %.3f (conf: %0.3f), Last Score:"
-          " %.3f (conf: %.3f) took %.3fs" % (usage, log_dict['loss'], log_dict['ub_loss'], log_dict['r_loss'],
-                                             log_dict['r_ub_loss'], log_dict['score'], log_dict['score_conf'],
-                                             log_dict['score_last'], log_dict['score_last_conf'], time.time() - t))
+    print("%s Loss: %.3f (UB: %.3f), Relational Loss: %.3f (UB: %.3f), Score: %.3f took %.3fs" % (usage, log_dict['loss'], log_dict['ub_loss'], log_dict['r_loss'], log_dict['r_ub_loss'], log_dict['score'], time.time() - t))
 
-    print("    other losses: {}".format(", ".join(["%.2f (UB: %.2f)" %
-          (log_dict['others'][:, i].sum(0) / s_loss_weights, log_dict['others_ub'][:, i].sum(0) / s_loss_weights)
-           for i in range(len(log_dict['others'][0]))])))
-    print("        last {} steps avg: {}".format(dt, ", ".join(["%.2f (UB: %.2f)" %
-          (log_dict['others'][-dt:, i].sum(0) / dt_s_loss_weights,
-           log_dict['others_ub'][-dt:, i].sum(0) / dt_s_loss_weights) for i in range(len(log_dict['others'][0]))])))
+    # print("    other losses: {}".format(", ".join(["%.2f (UB: %.2f)" %
+    #      (log_dict['others'][:, i].sum(0) / s_loss_weights, log_dict['others_ub'][:, i].sum(0) / s_loss_weights)
+    #       for i in range(len(log_dict['others'][0]))])))
+    # print("        last {} steps avg: {}".format(dt, ", ".join(["%.2f (UB: %.2f)" %
+    #      (log_dict['others'][-dt:, i].sum(0) / dt_s_loss_weights,
+    #       log_dict['others_ub'][-dt:, i].sum(0) / dt_s_loss_weights) for i in range(len(log_dict['others'][0]))])))
 
-    print("    other relational losses: {}".format(", ".join(["%.2f (UB: %.2f)" %
-          (log_dict['r_others'][:, i].sum(0) / s_loss_weights, log_dict['r_others_ub'][:, i].sum(0) / s_loss_weights)
-           for i in range(len(log_dict['r_others'][0]))])))
-    print("        last {} steps avg: {}".format(dt, ", ".join(["%.2f (UB: %.2f)" %
-          (log_dict['r_others'][-dt:, i].sum(0) / dt_s_loss_weights,
-           log_dict['r_others_ub'][-dt:, i].sum(0) / dt_s_loss_weights) for i in range(len(log_dict['r_others'][0]))])))
+    #print("    other relational losses: {}".format(", ".join(["%.2f (UB: %.2f)" %
+    #      (log_dict['r_others'][:, i].sum(0) / s_loss_weights, log_dict['r_others_ub'][:, i].sum(0) / s_loss_weights)
+    #       for i in range(len(log_dict['r_others'][0]))])))
+    #print("        last {} steps avg: {}".format(dt, ", ".join(["%.2f (UB: %.2f)" %
+    #      (log_dict['r_others'][-dt:, i].sum(0) / dt_s_loss_weights,
+    #       log_dict['r_others_ub'][-dt:, i].sum(0) / dt_s_loss_weights) for i in range(len(log_dict['r_others'][0]))])))
 
 
 @ex.automain
@@ -285,7 +337,7 @@ def run(record_grouping_score, record_relational_loss, feed_actions, net_path, t
     out_list.append('actions') if feed_actions else None
 
     train_dataset = InputDataset("training", training['batch_size'], out_list, sequence_length = nem['nr_steps'] + 1)
-    valid_dataset = InputDataset("validation", training['batch_size'], out_list, sequence_length = nem['nr_steps'] + 1)
+    valid_dataset = InputDataset("validation", validation['batch_size'], out_list, sequence_length = nem['nr_steps'] + 1)
     train_data_loader = DataLoader(dataset=train_dataset, batch_size=1,
                         shuffle=False, num_workers=training['num_workers'],
                         collate_fn=collate)
@@ -317,19 +369,19 @@ def run(record_grouping_score, record_relational_loss, feed_actions, net_path, t
 
         # run valid epoch
         t = time.time()
-        log_dict = run_epoch(nem_cell, optimizer, valid_data_loader, train=False)
+        log_dict = run_val_epoch(nem_cell, optimizer, valid_data_loader)
 
         # add logs
         log_log_dict('validation', log_dict)
 
         # produce plots
         create_curve_plots('loss', {'training': get_logs('training.loss'),
-                                    'validation': get_logs('validation.loss')}, [0, 1000], [0, 200])
+            'validation': get_logs('validation.loss')}, [0, 1000], [0, 200])
         create_curve_plots('r_loss', {'training': get_logs('training.r_loss'),
                                       'validation': get_logs('validation.r_loss')}, [0, 100], [0, 20])
 
-        create_curve_plots('score', {'score': get_logs('validation.score'),
-                                     'score_last': get_logs('validation.score_last')}, [0, 1], None)
+        create_curve_plots('score', {'training': get_logs('training.score'),
+                                     'validation': get_logs('validation.score')}, [0, 1], None)
 
         # produce print-out
         print("\n")
@@ -338,24 +390,24 @@ def run(record_grouping_score, record_relational_loss, feed_actions, net_path, t
         if log_dict['loss'] < best_valid_loss:
             best_valid_loss = log_dict['loss']
             best_valid_epoch = epoch
-            _run.result = float(log_dict['score']), float(log_dict['score_last']), \
-                          float(log_dict['loss']), float(log_dict['ub_loss']), \
-                          float(np.sum(log_dict['others'][-dt:, 1])/dt_s_loss_weights), \
-                          float(np.sum(log_dict['others_ub'][-dt:, 1]) / dt_s_loss_weights), \
-                          float(np.sum(log_dict['others'][-dt:, 2]) / dt_s_loss_weights), \
-                          float(np.sum(log_dict['others_ub'][-dt:, 2]) / dt_s_loss_weights), \
-                          float(log_dict['r_loss']), float(log_dict['r_ub_loss']), \
-                          float(np.sum(log_dict['r_others'][-dt:, 1]) / dt_s_loss_weights), \
-                          float(np.sum(log_dict['r_others_ub'][-dt:, 1]) / dt_s_loss_weights), \
-                          float(np.sum(log_dict['r_others'][-dt:, 2]) / dt_s_loss_weights), \
-                          float(np.sum(log_dict['r_others_ub'][-dt:, 2]) / dt_s_loss_weights)
+            _run.result = float(log_dict['score']), \
+                          float(log_dict['loss']), float(log_dict['ub_loss']),  float(log_dict['r_loss']), float(log_dict['r_ub_loss'])
+
+                          #float(np.sum(log_dict['others'][-dt:, 1])/dt_s_loss_weights), \
+                          #float(np.sum(log_dict['others_ub'][-dt:, 1]) / dt_s_loss_weights), \
+                          #float(np.sum(log_dict['others'][-dt:, 2]) / dt_s_loss_weights), \
+                          #float(np.sum(log_dict['others_ub'][-dt:, 2]) / dt_s_loss_weights), \
+                          #float(np.sum(log_dict['r_others'][-dt:, 1]) / dt_s_loss_weights), \
+                          #float(np.sum(log_dict['r_others_ub'][-dt:, 1]) / dt_s_loss_weights), \
+                          #float(np.sum(log_dict['r_others'][-dt:, 2]) / dt_s_loss_weights), \
+                          #float(np.sum(log_dict['r_others_ub'][-dt:, 2]) / dt_s_loss_weights)
 
             print("    Best validation loss improved to %.03f" % best_valid_loss)
-            save_destination = saver.save(session, os.path.abspath(os.path.join(log_dir, 'best')))
-            print("    Saved to:", save_destination)
+            torch.save(nem_cell.state_dict(), os.path.abspath(os.path.join(log_dir, 'best')))
+            print("    Saved to:", os.path.abspath(os.path.join(log_dir, 'best')))
         if epoch in save_epochs:
-            save_destination = saver.save(session, os.path.abspath(os.path.join(log_dir, 'epoch_{}'.format(epoch))))
-            print("    Saved to:", save_destination)
+            torch.save(nem_cell.state_dict(), os.path.abspath(os.path.join(log_dir, 'epoch_{}'.format(epoch))))
+            print("    Saved to:", os.path.abspath(os.path.join(log_dir, 'epoch_{}'.format(epoch))))
 
         best_valid_loss = min(best_valid_loss, log_dict['loss'])
 
@@ -367,33 +419,27 @@ def run(record_grouping_score, record_relational_loss, feed_actions, net_path, t
             print('Early Stopping because validation loss is nan')
             break
 
-
-    # reset the graph
-    tf.reset_default_graph()
-
     # gather best results
     best_valid_score = float(get_logs('validation.score')[best_valid_epoch - 1])
-    best_valid_score_last = float(get_logs('validation.score_last')[best_valid_epoch - 1])
+    #best_valid_score_last = float(get_logs('validation.score_last')[best_valid_epoch - 1])
 
     best_valid_loss = float(get_logs('validation.loss')[best_valid_epoch - 1])
     best_valid_ub_loss = float(get_logs('validation.ub_loss')[best_valid_epoch - 1])
 
-    best_valid_intra_loss = float(np.sum(get_logs('validation.others')[best_valid_epoch - 1][-dt:, 1])/dt_s_loss_weights)
-    best_valid_intra_ub_loss = float(np.sum(get_logs('validation.others_ub')[best_valid_epoch - 1][-dt:, 1])/dt_s_loss_weights)
+    #best_valid_intra_loss = float(np.sum(get_logs('validation.others')[best_valid_epoch - 1][-dt:, 1])/dt_s_loss_weights)
+    #best_valid_intra_ub_loss = float(np.sum(get_logs('validation.others_ub')[best_valid_epoch - 1][-dt:, 1])/dt_s_loss_weights)
 
-    best_valid_inter_loss = float(np.sum(get_logs('validation.others')[best_valid_epoch - 1][-dt:, 2])/dt_s_loss_weights)
-    best_valid_inter_ub_loss = float(np.sum(get_logs('validation.others_ub')[best_valid_epoch - 1][-dt:, 2])/dt_s_loss_weights)
+    #best_valid_inter_loss = float(np.sum(get_logs('validation.others')[best_valid_epoch - 1][-dt:, 2])/dt_s_loss_weights)
+    #best_valid_inter_ub_loss = float(np.sum(get_logs('validation.others_ub')[best_valid_epoch - 1][-dt:, 2])/dt_s_loss_weights)
 
     best_valid_r_loss = float(get_logs('validation.r_loss')[best_valid_epoch - 1])
     best_valid_r_ub_loss = float(get_logs('validation.r_ub_loss')[best_valid_epoch - 1])
 
-    best_valid_r_intra_loss = float(np.sum(get_logs('validation.r_others')[best_valid_epoch - 1][-dt:, 1])/dt_s_loss_weights)
-    best_valid_r_intra_ub_loss = float(np.sum(get_logs('validation.r_others_ub')[best_valid_epoch - 1][-dt:, 1])/dt_s_loss_weights)
+    #best_valid_r_intra_loss = float(np.sum(get_logs('validation.r_others')[best_valid_epoch - 1][-dt:, 1])/dt_s_loss_weights)
+    #best_valid_r_intra_ub_loss = float(np.sum(get_logs('validation.r_others_ub')[best_valid_epoch - 1][-dt:, 1])/dt_s_loss_weights)
 
-    best_valid_r_inter_loss = float(np.sum(get_logs('validation.r_others')[best_valid_epoch - 1][-dt:, 2])/dt_s_loss_weights)
-    best_valid_r_inter_ub_loss = float(np.sum(get_logs('validation.r_others_ub')[best_valid_epoch - 1][-dt:, 2])/dt_s_loss_weights)
+    #best_valid_r_inter_loss = float(np.sum(get_logs('validation.r_others')[best_valid_epoch - 1][-dt:, 2])/dt_s_loss_weights)
+    #best_valid_r_inter_ub_loss = float(np.sum(get_logs('validation.r_others_ub')[best_valid_epoch - 1][-dt:, 2])/dt_s_loss_weights)
 
-    return best_valid_score, best_valid_score_last, best_valid_loss, best_valid_ub_loss, best_valid_intra_loss, \
-           best_valid_intra_ub_loss, best_valid_inter_loss, best_valid_inter_ub_loss, best_valid_r_loss, \
-           best_valid_r_ub_loss, best_valid_r_intra_loss, best_valid_r_intra_ub_loss, best_valid_r_inter_loss, \
-           best_valid_r_inter_ub_loss
+    return best_valid_score, best_valid_loss, best_valid_ub_loss, \
+           best_valid_r_loss, best_valid_r_ub_loss

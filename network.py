@@ -243,14 +243,18 @@ class R_NEM(torch.nn.Module):
         state1rr = state1.view(b,self._K,1,-1)
 
         fs = state1rr.repeat(1,1,self._K-1,1)
-        state1rl = torch.unbind(state1r,1)
+        #state1rl = torch.unbind(state1r,1)
 
         if k > 1:
             csu = []
             for i in range(k):
                 selector = [j for j in range(k) if j != i]
-                c = list(np.take(state1rl, selector))  # list of length k-1 of (b, h1)
-                c = torch.stack(c, dim=1)     # (b, k-1, h1)
+                tensor = torch.LongTensor
+                if torch.cuda.is_available():
+                    tensor = torch.cuda.LongTensor
+                c = torch.index_select(state1r, 1, tensor(selector))
+                #c = list(np.take(state1rl, selector))  # list of length k-1 of (b, h1)
+                #c = torch.stack(c, dim=1)     # (b, k-1, h1)
                 csu.append(c)
 
             cs = torch.stack(csu, dim=1)    # (b, k, k-1, h1)   
@@ -274,7 +278,7 @@ class R_NEM(torch.nn.Module):
         total = torch.cat((state1, effectrsum, inputs), dim=1)
 
         new_state = self._recurrent_wrapper(total)
-        del attention, attentionr, contextr, context, core_out, total, cs, fs, inputs, state1, state1rl, state1r, state1rr, effectrsum
+        del attention, attentionr, contextr, context, core_out, total, cs, fs, inputs, state1, state1r, state1rr, effectrsum
 
         return self._output_wrapper(new_state), new_state
 

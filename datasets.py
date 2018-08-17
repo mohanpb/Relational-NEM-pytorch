@@ -50,7 +50,8 @@ class InputDataset(Dataset):
         self._open_dataset(out_list)
 
     def __len__(self):
-        return int(self.limit/self.batch_size)
+        return 3
+        #return int(self.limit/self.batch_size)
 
     def __getitem__(self, index):
         data = [torch.from_numpy(ds[:self.sequence_length, self.batch_size*index:(index + 1)*self.batch_size][:, :, None].astype(np.float32))

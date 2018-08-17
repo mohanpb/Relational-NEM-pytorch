@@ -208,8 +208,8 @@ def compute_outer_loss(mu, gamma, target, prior, pixel_distribution, collision, 
     total_loss = intra_loss + loss_inter_weight * inter_loss
     r_total_loss = r_intra_loss + loss_inter_weight * r_inter_loss
 
-    del  intra_loss, inter_loss, r_total_loss, r_intra_loss, r_inter_loss
-    return total_loss
+    del  intra_loss, inter_loss, r_intra_loss, r_inter_loss
+    return total_loss, r_total_loss
 
 @nem.capture
 def compute_outer_ub_loss(pred, target, prior, pixel_distribution, collision, loss_inter_weight):
@@ -235,8 +235,8 @@ def compute_outer_ub_loss(pred, target, prior, pixel_distribution, collision, lo
     total_ub_loss = intra_ub_loss + loss_inter_weight * inter_ub_loss
     r_total_ub_loss = r_intra_ub_loss + loss_inter_weight * r_inter_ub_loss
 
-    del r_intra_ub_loss, r_inter_ub_loss, intra_ub_loss, inter_ub_loss, r_total_ub_loss
-    return total_ub_loss
+    del r_intra_ub_loss, r_inter_ub_loss, intra_ub_loss, inter_ub_loss
+    return total_ub_loss, r_total_ub_loss
 
 
 @nem.capture
@@ -254,9 +254,50 @@ def get_loss_step_weights(nr_steps, loss_step_weights):
     else:
         raise KeyError('Unknown loss_step_weight type: "{}"'.format(loss_step_weights))
 
+def adjusted_rand_index(groups, gammas):
+    """
+    Inputs:
+        groups: shape=(B, 1, W, H, 1)
+            These are the masks as stored in the hdf5 files
+        gammas: shape=(B, K, W, H, 1)
+            These are the gammas as predicted by the network
+    """
+    # reshape gammas and convert to one-hot
+    yshape = list(gammas.size())
+    gammas = gammas.view(yshape[0], yshape[1], yshape[2] * yshape[3] * yshape[4])
+    tensor = torch.LongTensor
+    if torch.cuda.is_available():
+        tensor = torch.cuda.LongTensor
+    Y = tensor(yshape[0], yshape[1], yshape[2] * yshape[3] * yshape[4]).zero_()
+    Y.scatter_(1,torch.argmax(gammas,dim=1,keepdim=True), 1)
+    # reshape masks
+    gshape = list(groups.size())
+    groups = groups.view(gshape[0], 1, gshape[2] * gshape[3] * gshape[4])
+    G = tensor(gshape[0], torch.max(groups).int()+1, gshape[2] * gshape[3] * gshape[4]).zero_()
+    G.scatter_(1,groups.long(), 1)
+    # now Y and G both have dim (B*T, K, N) where N=W*H*C
+    # mask entries with group 0
+    M = torch.ge(groups, 0.5).float()
+    n = torch.sum(torch.sum(M, 2), 1)
+    DM = G.float() * M
+    YM = Y.float() * M
+    # contingency table for overlap between G and Y
+    nij = torch.einsum('bij,bkj->bki', (YM, DM))
+    a = torch.sum(nij, dim=1)
+    b = torch.sum(nij, dim=2)
+    # rand index
+    rindex = torch.sum(torch.sum(nij * (nij-1), 2),1).float()
+    aindex = torch.sum(a * (a-1), dim=1).float()
+    bindex = torch.sum(b * (b-1), dim=1).float()
+    expected_rindex = aindex * bindex / (n*(n-1) + 1e-6)
+    max_rindex = (aindex + bindex) / 2
+    ARI = (rindex - expected_rindex)/torch.clamp(max_rindex - expected_rindex, 1e-6, 1e6)
+    mean_ARI = torch.mean(ARI)
+    del yshape, Y, gshape, G, M, n, DM, YM, nij, a, b, rindex, bindex, expected_rindex, max_rindex, ARI
+    return mean_ARI
 
 @nem.capture
-def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k, pixel_dist, collisions=None, actions=None):
+def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, groups, k, pixel_dist, collisions=None, actions=None):
 
     # compute prior
     prior = compute_prior(distribution=pixel_dist)
@@ -266,7 +307,7 @@ def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k
 
     # build static iterations
     outputs = [hidden_state]
-    total_losses, total_ub_losses, r_total_losses, r_total_ub_losses, other_losses, other_ub_losses, r_other_losses, r_other_ub_losses = [], [], [], [], [], [], [], []
+    total_losses, total_ub_losses, r_total_losses, r_total_ub_losses, other_losses, other_ub_losses, r_other_losses, r_other_ub_losses, ari_scores = [], [], [], [], [], [], [], [], []
     loss_step_weights = get_loss_step_weights()
 
     for t, loss_weight in enumerate(loss_step_weights):
@@ -288,18 +329,21 @@ def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k
         collision = torch.zeros(1, 1, 1, 1, 1) if collisions is None else collisions[t]
 
         # compute nem losses
-        total_loss = compute_outer_loss(pred, gamma, target_data[t+1], prior, pixel_distribution=pixel_dist, collision=collision)
+        total_loss, r_total_loss = compute_outer_loss(pred, gamma, target_data[t+1], prior, pixel_distribution=pixel_dist, collision=collision)
 
         # compute estimated loss upper bound (which doesn't use E-step)
-        total_ub_loss = compute_outer_ub_loss(pred, target_data[t+1], prior, pixel_distribution=pixel_dist, collision=collision)
+        total_ub_loss, r_total_ub_loss = compute_outer_ub_loss(pred, target_data[t+1], prior, pixel_distribution=pixel_dist, collision=collision)
 
         total_losses.append(loss_weight * total_loss)
         total_ub_losses.append(loss_weight * total_ub_loss)
 
-        '''r_total_losses.append(loss_weight * r_total_loss)
+        r_total_losses.append(loss_weight * r_total_loss)
         r_total_ub_losses.append(loss_weight * r_total_ub_loss)
 
-        other_losses.append(torch.stack([total_loss, intra_loss, inter_loss]))
+        ari_scores.append(adjusted_rand_index(groups[t], gamma))
+        del theta, pred, gamma
+
+        '''other_losses.append(torch.stack([total_loss, intra_loss, inter_loss]))
         other_ub_losses.append(torch.stack([total_ub_loss, intra_ub_loss, inter_ub_loss]))
 
         r_other_losses.append(torch.stack([r_total_loss, r_intra_loss, r_inter_loss]))
@@ -318,15 +362,15 @@ def static_nem_iterations(nem_cell, input_data, target_data, optimizer, train, k
     # r_other_ub_losses = torch.stack(r_other_ub_losses)
     total_loss = torch.sum(torch.stack(total_losses)) / np.sum(loss_step_weights)
     total_ub_loss = torch.sum(torch.stack(total_ub_losses)) / np.sum(loss_step_weights)
-    # r_total_loss = torch.sum(torch.stack(r_total_losses)) / np.sum(loss_step_weights)
-    # r_total_ub_loss = torch.sum(torch.stack(r_total_ub_losses)) / np.sum(loss_step_weights)
+    r_total_loss = torch.sum(torch.stack(r_total_losses)) / np.sum(loss_step_weights)
+    r_total_ub_loss = torch.sum(torch.stack(r_total_ub_losses)) / np.sum(loss_step_weights)
+    total_ari_score = torch.sum(torch.stack(ari_scores)) / np.sum(loss_step_weights)
 
     if train:
         optimizer.zero_grad()
         total_loss.backward()
         optimizer.step()
 
-    return total_loss, total_ub_loss
-            # r_total_loss, r_total_ub_loss, other_losses, \
-            # other_ub_losses, r_other_losses, r_other_ub_losses
+    return total_loss, total_ub_loss, r_total_loss, r_total_ub_loss, total_ari_score
+            # other_losses, other_ub_losses, r_other_losses, r_other_ub_losses
 
